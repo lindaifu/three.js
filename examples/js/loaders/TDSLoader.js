@@ -1,19 +1,17 @@
-/*
- * Autodesk 3DS threee.js file loader, based on lib3ds.
+console.warn( "THREE.TDSLoader: As part of the transition to ES6 Modules, the files in 'examples/js' were deprecated in May 2020 (r117) and will be deleted in December 2020 (r124). You can find more information about developing using ES6 Modules in https://threejs.org/docs/#manual/en/introduction/Installation." );
+/**
+ * Autodesk 3DS three.js file loader, based on lib3ds.
  *
  * Loads geometry with uv and materials basic properties with texture support.
  *
- * @author @tentone
- * @author @timknip
  * @class TDSLoader
  * @constructor
  */
 
-'use strict';
-
 THREE.TDSLoader = function ( manager ) {
 
-	this.manager = ( manager !== undefined ) ? manager : THREE.DefaultLoadingManager;
+	THREE.Loader.call( this, manager );
+
 	this.debug = false;
 
 	this.group = null;
@@ -22,14 +20,12 @@ THREE.TDSLoader = function ( manager ) {
 	this.materials = [];
 	this.meshes = [];
 
-	this.path = "";
-
 };
 
-THREE.TDSLoader.prototype = {
+THREE.TDSLoader.prototype = Object.assign( Object.create( THREE.Loader.prototype ), {
 
 	constructor: THREE.TDSLoader,
-	
+
 	/**
 	 * Load 3ds file from url.
 	 *
@@ -39,17 +35,39 @@ THREE.TDSLoader.prototype = {
 	 * @param {Function} onProgress onProgress callback.
 	 * @param {Function} onError onError callback.
 	 */
-	load : function ( url, onLoad, onProgress, onError ) {
+	load: function ( url, onLoad, onProgress, onError ) {
 
 		var scope = this;
 
-		var loader = new THREE.FileLoader( this.manager );
+		var path = ( this.path === '' ) ? THREE.LoaderUtils.extractUrlBase( url ) : this.path;
 
+		var loader = new THREE.FileLoader( this.manager );
+		loader.setPath( this.path );
 		loader.setResponseType( 'arraybuffer' );
+		loader.setRequestHeader( this.requestHeader );
+		loader.setWithCredentials( this.withCredentials );
 
 		loader.load( url, function ( data ) {
 
-			onLoad( scope.parse( data ) );
+			try {
+
+				onLoad( scope.parse( data, path ) );
+
+			} catch ( e ) {
+
+				if ( onError ) {
+
+					onError( e );
+
+				} else {
+
+					console.error( e );
+
+				}
+
+				scope.manager.itemError( url );
+
+			}
 
 		}, onProgress, onError );
 
@@ -61,16 +79,16 @@ THREE.TDSLoader.prototype = {
 	 * @method parse
 	 * @param {ArrayBuffer} arraybuffer Arraybuffer data to be loaded.
 	 * @param {String} path Path for external resources.
-	 * @return {Object3D} Group loaded from 3ds file.
+	 * @return {Group} Group loaded from 3ds file.
 	 */
-	parse : function ( arraybuffer ) {
+	parse: function ( arraybuffer, path ) {
 
 		this.group = new THREE.Group();
 		this.position = 0;
 		this.materials = [];
 		this.meshes = [];
 
-		this.readFile( arraybuffer );
+		this.readFile( arraybuffer, path );
 
 		for ( var i = 0; i < this.meshes.length; i ++ ) {
 
@@ -87,8 +105,9 @@ THREE.TDSLoader.prototype = {
 	 *
 	 * @method readFile
 	 * @param {ArrayBuffer} arraybuffer Arraybuffer data to be loaded.
+	 * @param {String} path Path for external resources.
 	 */
-	readFile : function ( arraybuffer ) {
+	readFile: function ( arraybuffer, path ) {
 
 		var data = new DataView( arraybuffer );
 		var chunk = this.readChunk( data );
@@ -107,7 +126,7 @@ THREE.TDSLoader.prototype = {
 				} else if ( next === MDATA ) {
 
 					this.resetPosition( data );
-					this.readMeshData( data );
+					this.readMeshData( data, path );
 
 				} else {
 
@@ -130,8 +149,9 @@ THREE.TDSLoader.prototype = {
 	 *
 	 * @method readMeshData
 	 * @param {Dataview} data Dataview in use.
+	 * @param {String} path Path for external resources.
 	 */
-	readMeshData : function ( data ) {
+	readMeshData: function ( data, path ) {
 
 		var chunk = this.readChunk( data );
 		var next = this.nextChunk( data, chunk );
@@ -159,7 +179,7 @@ THREE.TDSLoader.prototype = {
 
 				this.debugMessage( 'Material' );
 				this.resetPosition( data );
-				this.readMaterialEntry( data );
+				this.readMaterialEntry( data, path );
 
 			} else {
 
@@ -179,7 +199,7 @@ THREE.TDSLoader.prototype = {
 	 * @method readNamedObject
 	 * @param {Dataview} data Dataview in use.
 	 */
-	readNamedObject : function ( data ) {
+	readNamedObject: function ( data ) {
 
 		var chunk = this.readChunk( data );
 		var name = this.readString( data, 64 );
@@ -214,8 +234,9 @@ THREE.TDSLoader.prototype = {
 	 *
 	 * @method readMaterialEntry
 	 * @param {Dataview} data Dataview in use.
+	 * @param {String} path Path for external resources.
 	 */
-	readMaterialEntry : function ( data ) {
+	readMaterialEntry: function ( data, path ) {
 
 		var chunk = this.readChunk( data );
 		var next = this.nextChunk( data, chunk );
@@ -270,29 +291,36 @@ THREE.TDSLoader.prototype = {
 				material.shininess = shininess;
 				this.debugMessage( '   Shininess : ' + shininess );
 
-			} else if( next === MAT_TEXMAP ) {
+			} else if ( next === MAT_TRANSPARENCY ) {
+
+				var opacity = this.readWord( data );
+				material.opacity = opacity * 0.01;
+				this.debugMessage( '  Opacity : ' + opacity );
+				material.transparent = opacity < 100 ? true : false;
+
+			} else if ( next === MAT_TEXMAP ) {
 
 				this.debugMessage( '   ColorMap' );
 				this.resetPosition( data );
-				material.map = this.readMap( data );
+				material.map = this.readMap( data, path );
 
-			} else if( next === MAT_BUMPMAP ) {
+			} else if ( next === MAT_BUMPMAP ) {
 
 				this.debugMessage( '   BumpMap' );
 				this.resetPosition( data );
-				material.bumpMap = this.readMap( data );
+				material.bumpMap = this.readMap( data, path );
 
-			} else if( next == MAT_OPACMAP ) {
+			} else if ( next === MAT_OPACMAP ) {
 
 				this.debugMessage( '   OpacityMap' );
 				this.resetPosition( data );
-				material.alphaMap = this.readMap( data );
+				material.alphaMap = this.readMap( data, path );
 
-			} else if( next == MAT_SPECMAP ) {
+			} else if ( next === MAT_SPECMAP ) {
 
 				this.debugMessage( '   SpecularMap' );
 				this.resetPosition( data );
-				material.specularMap = this.readMap( data );
+				material.specularMap = this.readMap( data, path );
 
 			} else {
 
@@ -315,25 +343,15 @@ THREE.TDSLoader.prototype = {
 	 *
 	 * @method readMesh
 	 * @param {Dataview} data Dataview in use.
+	 * @return {Mesh} The parsed mesh.
 	 */
-	readMesh : function ( data ) {
+	readMesh: function ( data ) {
 
 		var chunk = this.readChunk( data );
 		var next = this.nextChunk( data, chunk );
 
-		var useBufferGeometry = false;
-		var geometry = null;
+		var geometry = new THREE.BufferGeometry();
 		var uvs = [];
-
-		if ( useBufferGeometry ) {
-
-			geometry = new THREE.BufferGeometry();
-
-		}	else {
-
-			geometry = new THREE.Geometry();
-
-		}
 
 		var material = new THREE.MeshPhongMaterial();
 		var mesh = new THREE.Mesh( geometry, material );
@@ -349,28 +367,17 @@ THREE.TDSLoader.prototype = {
 
 				//BufferGeometry
 
-				if ( useBufferGeometry )	{
+				var vertices = [];
 
-					var vertices = [];
-					for ( var i = 0; i < points; i ++ )		{
+				for ( var i = 0; i < points; i ++ )		{
 
-						vertices.push( this.readFloat( data ) );
-						vertices.push( this.readFloat( data ) );
-						vertices.push( this.readFloat( data ) );
-
-					}
-
-					geometry.addAttribute( 'position', new THREE.BufferAttribute( new Float32Array( vertices ), 3 ) );
-
-				} else	{ //Geometry
-
-					for ( var i = 0; i < points; i ++ )		{
-
-						geometry.vertices.push( new THREE.Vector3( this.readFloat( data ), this.readFloat( data ), this.readFloat( data ) ) );
-
-					}
+					vertices.push( this.readFloat( data ) );
+					vertices.push( this.readFloat( data ) );
+					vertices.push( this.readFloat( data ) );
 
 				}
+
+				geometry.setAttribute( 'position', new THREE.Float32BufferAttribute( vertices, 3 ) );
 
 			} else if ( next === FACE_ARRAY ) {
 
@@ -385,71 +392,61 @@ THREE.TDSLoader.prototype = {
 
 				//BufferGeometry
 
-				if ( useBufferGeometry )	{
+				var uvs = [];
 
-					var uvs = [];
-					for ( var i = 0; i < texels; i ++ )		{
+				for ( var i = 0; i < texels; i ++ )		{
 
-						uvs.push( this.readFloat( data ) );
-						uvs.push( this.readFloat( data ) );
-
-					}
-					geometry.addAttribute( 'uv', new THREE.BufferAttribute( new Float32Array( uvs ), 2 ) );
-
-				} else { //Geometry
-
-					uvs = [];
-					for ( var i = 0; i < texels; i ++ )		{
-
-						uvs.push( new THREE.Vector2( this.readFloat( data ), this.readFloat( data ) ) );
-
-					}
+					uvs.push( this.readFloat( data ) );
+					uvs.push( this.readFloat( data ) );
 
 				}
+
+				geometry.setAttribute( 'uv', new THREE.Float32BufferAttribute( uvs, 2 ) );
+
 
 			} else if ( next === MESH_MATRIX ) {
 
 				this.debugMessage( '   Tranformation Matrix (TODO)' );
 
 				var values = [];
-				for( var i = 0; i < 12; i++ ) {
+				for ( var i = 0; i < 12; i ++ ) {
 
 					values[ i ] = this.readFloat( data );
-				
+
 				}
 
 				var matrix = new THREE.Matrix4();
 
 				//X Line
-				matrix.elements[0] = values[0];
-				matrix.elements[1] = values[6];
-				matrix.elements[2] = values[3];
-				matrix.elements[3] = values[9];
+				matrix.elements[ 0 ] = values[ 0 ];
+				matrix.elements[ 1 ] = values[ 6 ];
+				matrix.elements[ 2 ] = values[ 3 ];
+				matrix.elements[ 3 ] = values[ 9 ];
 
 				//Y Line
-				matrix.elements[4] = values[2];
-				matrix.elements[5] = values[8];
-				matrix.elements[6] = values[5];
-				matrix.elements[7] = values[11];
+				matrix.elements[ 4 ] = values[ 2 ];
+				matrix.elements[ 5 ] = values[ 8 ];
+				matrix.elements[ 6 ] = values[ 5 ];
+				matrix.elements[ 7 ] = values[ 11 ];
 
 				//Z Line
-				matrix.elements[8] = values[1];
-				matrix.elements[9] = values[7];
-				matrix.elements[10] = values[4];
-				matrix.elements[11] = values[10];
+				matrix.elements[ 8 ] = values[ 1 ];
+				matrix.elements[ 9 ] = values[ 7 ];
+				matrix.elements[ 10 ] = values[ 4 ];
+				matrix.elements[ 11 ] = values[ 10 ];
 
 				//W Line
-				matrix.elements[12] = 0;
-				matrix.elements[13] = 0;
-				matrix.elements[14] = 0;
-				matrix.elements[15] = 1;
+				matrix.elements[ 12 ] = 0;
+				matrix.elements[ 13 ] = 0;
+				matrix.elements[ 14 ] = 0;
+				matrix.elements[ 15 ] = 1;
 
 				matrix.transpose();
 
 				var inverse = new THREE.Matrix4();
-				inverse.getInverse( matrix, true );
-				geometry.applyMatrix( inverse );
-				
+				inverse.getInverse( matrix );
+				geometry.applyMatrix4( inverse );
+
 				matrix.decompose( mesh.position, mesh.quaternion, mesh.scale );
 
 			} else {
@@ -464,27 +461,7 @@ THREE.TDSLoader.prototype = {
 
 		this.endChunk( chunk );
 
-		if ( ! useBufferGeometry ) {
-
-			//geometry.faceVertexUvs[0][faceIndex][vertexIndex]
-
-			if ( uvs.length > 0 ) {
-
-				var faceUV = [];
-
-				for ( var i = 0; i < geometry.faces.length; i ++ ) {
-
-					faceUV.push( [ uvs[ geometry.faces[ i ].a ], uvs[ geometry.faces[ i ].b ], uvs[ geometry.faces[ i ].c ] ] );
-
-				}
-
-				geometry.faceVertexUvs[ 0 ] = faceUV;
-	
-			}		
-
-			geometry.computeVertexNormals();
-
-		}
+		geometry.computeVertexNormals();
 
 		return mesh;
 
@@ -497,20 +474,24 @@ THREE.TDSLoader.prototype = {
 	 * @param {Dataview} data Dataview in use.
 	 * @param {Mesh} mesh Mesh to be filled with the data read.
 	 */
-	readFaceArray : function ( data, mesh ) {
+	readFaceArray: function ( data, mesh ) {
 
 		var chunk = this.readChunk( data );
 		var faces = this.readWord( data );
 
 		this.debugMessage( '   Faces: ' + faces );
 
+		var index = [];
+
 		for ( var i = 0; i < faces; ++ i ) {
 
-			mesh.geometry.faces.push( new THREE.Face3( this.readWord( data ), this.readWord( data ), this.readWord( data ) ) );
+			index.push( this.readWord( data ), this.readWord( data ), this.readWord( data ) );
 
-			var visibility = this.readWord( data );
+			this.readWord( data ); // visibility
 
 		}
+
+		mesh.geometry.setIndex( index );
 
 		//The rest of the FACE_ARRAY chunk is subchunks
 
@@ -559,52 +540,48 @@ THREE.TDSLoader.prototype = {
 	 *
 	 * @method readMap
 	 * @param {Dataview} data Dataview in use.
+	 * @param {String} path Path for external resources.
 	 * @return {Texture} Texture read from this data chunk.
 	 */
-	readMap : function( data ) {
+	readMap: function ( data, path ) {
 
 		var chunk = this.readChunk( data );
 		var next = this.nextChunk( data, chunk );
 		var texture = {};
 
-		var loader = new THREE.TextureLoader();
-		loader.setPath( this.path );
+		var loader = new THREE.TextureLoader( this.manager );
+		loader.setPath( this.resourcePath || path ).setCrossOrigin( this.crossOrigin );
 
-		while( next !== 0 ) {
+		while ( next !== 0 ) {
 
 			if ( next === MAT_MAPNAME ) {
 
 				var name = this.readString( data, 128 );
 				texture = loader.load( name );
 
-				this.debugMessage( '      File: ' + this.path + name );
+				this.debugMessage( '      File: ' + path + name );
 
-			}
-			else if ( next === MAT_MAP_UOFFSET) {
+			} else if ( next === MAT_MAP_UOFFSET ) {
 
 				texture.offset.x = this.readFloat( data );
 				this.debugMessage( '      OffsetX: ' + texture.offset.x );
 
-			}
-			else if ( next === MAT_MAP_VOFFSET) {
+			} else if ( next === MAT_MAP_VOFFSET ) {
 
 				texture.offset.y = this.readFloat( data );
 				this.debugMessage( '      OffsetY: ' + texture.offset.y );
 
-			}
-			else if ( next === MAT_MAP_USCALE) {
+			} else if ( next === MAT_MAP_USCALE ) {
 
 				texture.repeat.x = this.readFloat( data );
 				this.debugMessage( '      RepeatX: ' + texture.repeat.x );
 
-			}
-			else if ( next === MAT_MAP_VSCALE) {
+			} else if ( next === MAT_MAP_VSCALE ) {
 
 				texture.repeat.y = this.readFloat( data );
 				this.debugMessage( '      RepeatY: ' + texture.repeat.y );
 
-			}
-			else {
+			} else {
 
 				this.debugMessage( '      Unknown map chunk: ' + next.toString( 16 ) );
 
@@ -627,9 +604,9 @@ THREE.TDSLoader.prototype = {
 	 * @param {Dataview} data Dataview in use.
 	 * @return {Object} Object with name and index of the object.
 	 */
-	readMaterialGroup : function ( data ) {
+	readMaterialGroup: function ( data ) {
 
-		var chunk = this.readChunk( data );
+		this.readChunk( data );
 		var name = this.readString( data, 64 );
 		var numFaces = this.readWord( data );
 
@@ -654,7 +631,7 @@ THREE.TDSLoader.prototype = {
 	 * @param {DataView} data Dataview.
 	 * @return {Color} Color value read..
 	 */
-	readColor : function ( data ) {
+	readColor: function ( data ) {
 
 		var chunk = this.readChunk( data );
 		var color = new THREE.Color();
@@ -681,7 +658,7 @@ THREE.TDSLoader.prototype = {
 
 		}	else {
 
-			this.debugMessage( '      Unknown color chunk: ' + c.toString( 16 ) );
+			this.debugMessage( '      Unknown color chunk: ' + chunk.toString( 16 ) );
 
 		}
 
@@ -697,7 +674,7 @@ THREE.TDSLoader.prototype = {
 	 * @param {DataView} data Dataview.
 	 * @return {Object} Chunk of data read.
 	 */
-	readChunk : function ( data ) {
+	readChunk: function ( data ) {
 
 		var chunk = {};
 
@@ -717,7 +694,7 @@ THREE.TDSLoader.prototype = {
 	 * @method endChunk
 	 * @param {Object} chunk Data chunk.
 	 */
-	endChunk : function ( chunk ) {
+	endChunk: function ( chunk ) {
 
 		this.position = chunk.end;
 
@@ -730,7 +707,7 @@ THREE.TDSLoader.prototype = {
 	 * @param {DataView} data Dataview.
 	 * @param {Object} chunk Data chunk.
 	 */
-	nextChunk : function ( data, chunk ) {
+	nextChunk: function ( data, chunk ) {
 
 		if ( chunk.cur >= chunk.end ) {
 
@@ -759,9 +736,8 @@ THREE.TDSLoader.prototype = {
 	 * Reset dataview position.
 	 *
 	 * @method resetPosition
-	 * @param {DataView} data Dataview.
 	 */
-	resetPosition : function ( data, chunk ) {
+	resetPosition: function () {
 
 		this.position -= 6;
 
@@ -774,7 +750,7 @@ THREE.TDSLoader.prototype = {
 	 * @param {DataView} data Dataview to read data from.
 	 * @return {Number} Data read from the dataview.
 	 */
-	readByte : function ( data ) {
+	readByte: function ( data ) {
 
 		var v = data.getUint8( this.position, true );
 		this.position += 1;
@@ -789,7 +765,7 @@ THREE.TDSLoader.prototype = {
 	 * @param {DataView} data Dataview to read data from.
 	 * @return {Number} Data read from the dataview.
 	 */
-	readFloat : function ( data ) {
+	readFloat: function ( data ) {
 
 		try {
 
@@ -812,7 +788,7 @@ THREE.TDSLoader.prototype = {
 	 * @param {DataView} data Dataview to read data from.
 	 * @return {Number} Data read from the dataview.
 	 */
-	readInt : function ( data ) {
+	readInt: function ( data ) {
 
 		var v = data.getInt32( this.position, true );
 		this.position += 4;
@@ -827,7 +803,7 @@ THREE.TDSLoader.prototype = {
 	 * @param {DataView} data Dataview to read data from.
 	 * @return {Number} Data read from the dataview.
 	 */
-	readShort : function ( data ) {
+	readShort: function ( data ) {
 
 		var v = data.getInt16( this.position, true );
 		this.position += 2;
@@ -842,7 +818,7 @@ THREE.TDSLoader.prototype = {
 	 * @param {DataView} data Dataview to read data from.
 	 * @return {Number} Data read from the dataview.
 	 */
-	readDWord : function ( data ) {
+	readDWord: function ( data ) {
 
 		var v = data.getUint32( this.position, true );
 		this.position += 4;
@@ -857,7 +833,7 @@ THREE.TDSLoader.prototype = {
 	 * @param {DataView} data Dataview to read data from.
 	 * @return {Number} Data read from the dataview.
 	 */
-	readWord : function ( data ) {
+	readWord: function ( data ) {
 
 		var v = data.getUint16( this.position, true );
 		this.position += 2;
@@ -873,7 +849,7 @@ THREE.TDSLoader.prototype = {
 	 * @param {Number} maxLength Max size of the string to be read.
 	 * @return {String} Data read from the dataview.
 	 */
-	readString : function ( data, maxLength ) {
+	readString: function ( data, maxLength ) {
 
 		var s = '';
 
@@ -895,24 +871,6 @@ THREE.TDSLoader.prototype = {
 	},
 
 	/**
-	 * Set resource path used to determine the file path to attached resources.
-	 *
-	 * @method setPath
-	 * @param {String} path Path to resources.
-	 * @return Self for chaining.
-	 */
-	setPath : function ( path ) {
-
-		if(path !== undefined)
-		{
-			this.path = path;
-		}
-
-		return this;
-
-	},
-
-	/**
 	 * Print debug message to the console.
 	 *
 	 * Is controlled by a flag to show or hide debug messages.
@@ -920,7 +878,7 @@ THREE.TDSLoader.prototype = {
 	 * @method debugMessage
 	 * @param {Object} message Debug message to print to the console.
 	 */
-	debugMessage : function ( message ) {
+	debugMessage: function ( message ) {
 
 		if ( this.debug ) {
 
@@ -929,223 +887,223 @@ THREE.TDSLoader.prototype = {
 		}
 
 	}
-};
 
-var NULL_CHUNK = 0x0000;
+} );
+
+// var NULL_CHUNK = 0x0000;
 var M3DMAGIC = 0x4D4D;
-var SMAGIC = 0x2D2D;
-var LMAGIC = 0x2D3D;
+// var SMAGIC = 0x2D2D;
+// var LMAGIC = 0x2D3D;
 var MLIBMAGIC = 0x3DAA;
-var MATMAGIC = 0x3DFF;
+// var MATMAGIC = 0x3DFF;
 var CMAGIC = 0xC23D;
 var M3D_VERSION = 0x0002;
-var M3D_KFVERSION = 0x0005;
+// var M3D_KFVERSION = 0x0005;
 var COLOR_F = 0x0010;
 var COLOR_24 = 0x0011;
 var LIN_COLOR_24 = 0x0012;
 var LIN_COLOR_F = 0x0013;
-var INT_PERCENTAGE = 0x0030;
-var FLOAT_PERCENTAGE = 0x0031;
+// var INT_PERCENTAGE = 0x0030;
+// var FLOAT_PERCENTAGE = 0x0031;
 var MDATA = 0x3D3D;
 var MESH_VERSION = 0x3D3E;
 var MASTER_SCALE = 0x0100;
-var LO_SHADOW_BIAS = 0x1400;
-var HI_SHADOW_BIAS = 0x1410;
-var SHADOW_MAP_SIZE = 0x1420;
-var SHADOW_SAMPLES = 0x1430;
-var SHADOW_RANGE = 0x1440;
-var SHADOW_FILTER = 0x1450;
-var RAY_BIAS = 0x1460;
-var O_CONSTS = 0x1500;
-var AMBIENT_LIGHT = 0x2100;
-var BIT_MAP = 0x1100;
-var SOLID_BGND = 0x1200;
-var V_GRADIENT = 0x1300;
-var USE_BIT_MAP = 0x1101;
-var USE_SOLID_BGND = 0x1201;
-var USE_V_GRADIENT = 0x1301;
-var FOG = 0x2200;
-var FOG_BGND = 0x2210;
-var LAYER_FOG = 0x2302;
-var DISTANCE_CUE = 0x2300;
-var DCUE_BGND = 0x2310;
-var USE_FOG = 0x2201;
-var USE_LAYER_FOG = 0x2303;
-var USE_DISTANCE_CUE = 0x2301;
+// var LO_SHADOW_BIAS = 0x1400;
+// var HI_SHADOW_BIAS = 0x1410;
+// var SHADOW_MAP_SIZE = 0x1420;
+// var SHADOW_SAMPLES = 0x1430;
+// var SHADOW_RANGE = 0x1440;
+// var SHADOW_FILTER = 0x1450;
+// var RAY_BIAS = 0x1460;
+// var O_CONSTS = 0x1500;
+// var AMBIENT_LIGHT = 0x2100;
+// var BIT_MAP = 0x1100;
+// var SOLID_BGND = 0x1200;
+// var V_GRADIENT = 0x1300;
+// var USE_BIT_MAP = 0x1101;
+// var USE_SOLID_BGND = 0x1201;
+// var USE_V_GRADIENT = 0x1301;
+// var FOG = 0x2200;
+// var FOG_BGND = 0x2210;
+// var LAYER_FOG = 0x2302;
+// var DISTANCE_CUE = 0x2300;
+// var DCUE_BGND = 0x2310;
+// var USE_FOG = 0x2201;
+// var USE_LAYER_FOG = 0x2303;
+// var USE_DISTANCE_CUE = 0x2301;
 var MAT_ENTRY = 0xAFFF;
 var MAT_NAME = 0xA000;
 var MAT_AMBIENT = 0xA010;
 var MAT_DIFFUSE = 0xA020;
 var MAT_SPECULAR = 0xA030;
 var MAT_SHININESS = 0xA040;
-var MAT_SHIN2PCT = 0xA041;
+// var MAT_SHIN2PCT = 0xA041;
 var MAT_TRANSPARENCY = 0xA050;
-var MAT_XPFALL = 0xA052;
-var MAT_USE_XPFALL = 0xA240;
-var MAT_REFBLUR = 0xA053;
-var MAT_SHADING = 0xA100;
-var MAT_USE_REFBLUR = 0xA250;
-var MAT_SELF_ILLUM = 0xA084;
+// var MAT_XPFALL = 0xA052;
+// var MAT_USE_XPFALL = 0xA240;
+// var MAT_REFBLUR = 0xA053;
+// var MAT_SHADING = 0xA100;
+// var MAT_USE_REFBLUR = 0xA250;
+// var MAT_SELF_ILLUM = 0xA084;
 var MAT_TWO_SIDE = 0xA081;
-var MAT_DECAL = 0xA082;
+// var MAT_DECAL = 0xA082;
 var MAT_ADDITIVE = 0xA083;
 var MAT_WIRE = 0xA085;
-var MAT_FACEMAP = 0xA088;
-var MAT_TRANSFALLOFF_IN = 0xA08A;
-var MAT_PHONGSOFT = 0xA08C;
-var MAT_WIREABS = 0xA08E;
+// var MAT_FACEMAP = 0xA088;
+// var MAT_TRANSFALLOFF_IN = 0xA08A;
+// var MAT_PHONGSOFT = 0xA08C;
+// var MAT_WIREABS = 0xA08E;
 var MAT_WIRE_SIZE = 0xA087;
 var MAT_TEXMAP = 0xA200;
-var MAT_SXP_TEXT_DATA = 0xA320;
-var MAT_TEXMASK = 0xA33E;
-var MAT_SXP_TEXTMASK_DATA = 0xA32A;
-var MAT_TEX2MAP = 0xA33A;
-var MAT_SXP_TEXT2_DATA = 0xA321;
-var MAT_TEX2MASK = 0xA340;
-var MAT_SXP_TEXT2MASK_DATA = 0xA32C;
+// var MAT_SXP_TEXT_DATA = 0xA320;
+// var MAT_TEXMASK = 0xA33E;
+// var MAT_SXP_TEXTMASK_DATA = 0xA32A;
+// var MAT_TEX2MAP = 0xA33A;
+// var MAT_SXP_TEXT2_DATA = 0xA321;
+// var MAT_TEX2MASK = 0xA340;
+// var MAT_SXP_TEXT2MASK_DATA = 0xA32C;
 var MAT_OPACMAP = 0xA210;
-var MAT_SXP_OPAC_DATA = 0xA322;
-var MAT_OPACMASK = 0xA342;
-var MAT_SXP_OPACMASK_DATA = 0xA32E;
+// var MAT_SXP_OPAC_DATA = 0xA322;
+// var MAT_OPACMASK = 0xA342;
+// var MAT_SXP_OPACMASK_DATA = 0xA32E;
 var MAT_BUMPMAP = 0xA230;
-var MAT_SXP_BUMP_DATA = 0xA324;
-var MAT_BUMPMASK = 0xA344;
-var MAT_SXP_BUMPMASK_DATA = 0xA330;
+// var MAT_SXP_BUMP_DATA = 0xA324;
+// var MAT_BUMPMASK = 0xA344;
+// var MAT_SXP_BUMPMASK_DATA = 0xA330;
 var MAT_SPECMAP = 0xA204;
-var MAT_SXP_SPEC_DATA = 0xA325;
-var MAT_SPECMASK = 0xA348;
-var MAT_SXP_SPECMASK_DATA = 0xA332;
-var MAT_SHINMAP = 0xA33C;
-var MAT_SXP_SHIN_DATA = 0xA326;
-var MAT_SHINMASK = 0xA346;
-var MAT_SXP_SHINMASK_DATA = 0xA334;
-var MAT_SELFIMAP = 0xA33D;
-var MAT_SXP_SELFI_DATA = 0xA328;
-var MAT_SELFIMASK = 0xA34A;
-var MAT_SXP_SELFIMASK_DATA = 0xA336;
-var MAT_REFLMAP = 0xA220;
-var MAT_REFLMASK = 0xA34C;
-var MAT_SXP_REFLMASK_DATA = 0xA338;
-var MAT_ACUBIC = 0xA310;
+// var MAT_SXP_SPEC_DATA = 0xA325;
+// var MAT_SPECMASK = 0xA348;
+// var MAT_SXP_SPECMASK_DATA = 0xA332;
+// var MAT_SHINMAP = 0xA33C;
+// var MAT_SXP_SHIN_DATA = 0xA326;
+// var MAT_SHINMASK = 0xA346;
+// var MAT_SXP_SHINMASK_DATA = 0xA334;
+// var MAT_SELFIMAP = 0xA33D;
+// var MAT_SXP_SELFI_DATA = 0xA328;
+// var MAT_SELFIMASK = 0xA34A;
+// var MAT_SXP_SELFIMASK_DATA = 0xA336;
+// var MAT_REFLMAP = 0xA220;
+// var MAT_REFLMASK = 0xA34C;
+// var MAT_SXP_REFLMASK_DATA = 0xA338;
+// var MAT_ACUBIC = 0xA310;
 var MAT_MAPNAME = 0xA300;
-var MAT_MAP_TILING = 0xA351;
-var MAT_MAP_TEXBLUR = 0xA353;
+// var MAT_MAP_TILING = 0xA351;
+// var MAT_MAP_TEXBLUR = 0xA353;
 var MAT_MAP_USCALE = 0xA354;
 var MAT_MAP_VSCALE = 0xA356;
 var MAT_MAP_UOFFSET = 0xA358;
 var MAT_MAP_VOFFSET = 0xA35A;
-var MAT_MAP_ANG = 0xA35C;
-var MAT_MAP_COL1 = 0xA360;
-var MAT_MAP_COL2 = 0xA362;
-var MAT_MAP_RCOL = 0xA364;
-var MAT_MAP_GCOL = 0xA366;
-var MAT_MAP_BCOL = 0xA368;
+// var MAT_MAP_ANG = 0xA35C;
+// var MAT_MAP_COL1 = 0xA360;
+// var MAT_MAP_COL2 = 0xA362;
+// var MAT_MAP_RCOL = 0xA364;
+// var MAT_MAP_GCOL = 0xA366;
+// var MAT_MAP_BCOL = 0xA368;
 var NAMED_OBJECT = 0x4000;
-var N_DIRECT_LIGHT = 0x4600;
-var DL_OFF = 0x4620;
-var DL_OUTER_RANGE = 0x465A;
-var DL_INNER_RANGE = 0x4659;
-var DL_MULTIPLIER = 0x465B;
-var DL_EXCLUDE = 0x4654;
-var DL_ATTENUATE = 0x4625;
-var DL_SPOTLIGHT = 0x4610;
-var DL_SPOT_ROLL = 0x4656;
-var DL_SHADOWED = 0x4630;
-var DL_LOCAL_SHADOW2 = 0x4641;
-var DL_SEE_CONE = 0x4650;
-var DL_SPOT_RECTANGULAR = 0x4651;
-var DL_SPOT_ASPECT = 0x4657;
-var DL_SPOT_PROJECTOR = 0x4653;
-var DL_SPOT_OVERSHOOT = 0x4652;
-var DL_RAY_BIAS = 0x4658;
-var DL_RAYSHAD = 0x4627;
-var N_CAMERA = 0x4700;
-var CAM_SEE_CONE = 0x4710;
-var CAM_RANGES = 0x4720;
-var OBJ_HIDDEN = 0x4010;
-var OBJ_VIS_LOFTER = 0x4011;
-var OBJ_DOESNT_CAST = 0x4012;
-var OBJ_DONT_RECVSHADOW = 0x4017;
-var OBJ_MATTE = 0x4013;
-var OBJ_FAST = 0x4014;
-var OBJ_PROCEDURAL = 0x4015;
-var OBJ_FROZEN = 0x4016;
+// var N_DIRECT_LIGHT = 0x4600;
+// var DL_OFF = 0x4620;
+// var DL_OUTER_RANGE = 0x465A;
+// var DL_INNER_RANGE = 0x4659;
+// var DL_MULTIPLIER = 0x465B;
+// var DL_EXCLUDE = 0x4654;
+// var DL_ATTENUATE = 0x4625;
+// var DL_SPOTLIGHT = 0x4610;
+// var DL_SPOT_ROLL = 0x4656;
+// var DL_SHADOWED = 0x4630;
+// var DL_LOCAL_SHADOW2 = 0x4641;
+// var DL_SEE_CONE = 0x4650;
+// var DL_SPOT_RECTANGULAR = 0x4651;
+// var DL_SPOT_ASPECT = 0x4657;
+// var DL_SPOT_PROJECTOR = 0x4653;
+// var DL_SPOT_OVERSHOOT = 0x4652;
+// var DL_RAY_BIAS = 0x4658;
+// var DL_RAYSHAD = 0x4627;
+// var N_CAMERA = 0x4700;
+// var CAM_SEE_CONE = 0x4710;
+// var CAM_RANGES = 0x4720;
+// var OBJ_HIDDEN = 0x4010;
+// var OBJ_VIS_LOFTER = 0x4011;
+// var OBJ_DOESNT_CAST = 0x4012;
+// var OBJ_DONT_RECVSHADOW = 0x4017;
+// var OBJ_MATTE = 0x4013;
+// var OBJ_FAST = 0x4014;
+// var OBJ_PROCEDURAL = 0x4015;
+// var OBJ_FROZEN = 0x4016;
 var N_TRI_OBJECT = 0x4100;
 var POINT_ARRAY = 0x4110;
-var POINT_FLAG_ARRAY = 0x4111;
+// var POINT_FLAG_ARRAY = 0x4111;
 var FACE_ARRAY = 0x4120;
 var MSH_MAT_GROUP = 0x4130;
-var SMOOTH_GROUP = 0x4150;
-var MSH_BOXMAP = 0x4190;
+// var SMOOTH_GROUP = 0x4150;
+// var MSH_BOXMAP = 0x4190;
 var TEX_VERTS = 0x4140;
 var MESH_MATRIX = 0x4160;
-var MESH_COLOR = 0x4165;
-var MESH_TEXTURE_INFO = 0x4170;
-var KFDATA = 0xB000;
-var KFHDR = 0xB00A;
-var KFSEG = 0xB008;
-var KFCURTIME = 0xB009;
-var AMBIENT_NODE_TAG = 0xB001;
-var OBJECT_NODE_TAG = 0xB002;
-var CAMERA_NODE_TAG = 0xB003;
-var TARGET_NODE_TAG = 0xB004;
-var LIGHT_NODE_TAG = 0xB005;
-var L_TARGET_NODE_TAG = 0xB006;
-var SPOTLIGHT_NODE_TAG = 0xB007;
-var NODE_ID = 0xB030;
-var NODE_HDR = 0xB010;
-var PIVOT = 0xB013;
-var INSTANCE_NAME = 0xB011;
-var MORPH_SMOOTH = 0xB015;
-var BOUNDBOX = 0xB014;
-var POS_TRACK_TAG = 0xB020;
-var COL_TRACK_TAG = 0xB025;
-var ROT_TRACK_TAG = 0xB021;
-var SCL_TRACK_TAG = 0xB022;
-var MORPH_TRACK_TAG = 0xB026;
-var FOV_TRACK_TAG = 0xB023;
-var ROLL_TRACK_TAG = 0xB024;
-var HOT_TRACK_TAG = 0xB027;
-var FALL_TRACK_TAG = 0xB028;
-var HIDE_TRACK_TAG = 0xB029;
-var POLY_2D = 0x5000;
-var SHAPE_OK = 0x5010;
-var SHAPE_NOT_OK = 0x5011;
-var SHAPE_HOOK = 0x5020;
-var PATH_3D = 0x6000;
-var PATH_MATRIX = 0x6005;
-var SHAPE_2D = 0x6010;
-var M_SCALE = 0x6020;
-var M_TWIST = 0x6030;
-var M_TEETER = 0x6040;
-var M_FIT = 0x6050;
-var M_BEVEL = 0x6060;
-var XZ_CURVE = 0x6070;
-var YZ_CURVE = 0x6080;
-var INTERPCT = 0x6090;
-var DEFORM_LIMIT = 0x60A0;
-var USE_CONTOUR = 0x6100;
-var USE_TWEEN = 0x6110;
-var USE_SCALE = 0x6120;
-var USE_TWIST = 0x6130;
-var USE_TEETER = 0x6140;
-var USE_FIT = 0x6150;
-var USE_BEVEL = 0x6160;
-var DEFAULT_VIEW = 0x3000;
-var VIEW_TOP = 0x3010;
-var VIEW_BOTTOM = 0x3020;
-var VIEW_LEFT = 0x3030;
-var VIEW_RIGHT = 0x3040;
-var VIEW_FRONT = 0x3050;
-var VIEW_BACK = 0x3060;
-var VIEW_USER = 0x3070;
-var VIEW_CAMERA = 0x3080;
-var VIEW_WINDOW = 0x3090;
-var VIEWPORT_LAYOUT_OLD = 0x7000;
-var VIEWPORT_DATA_OLD = 0x7010;
-var VIEWPORT_LAYOUT = 0x7001;
-var VIEWPORT_DATA = 0x7011;
-var VIEWPORT_DATA_3 = 0x7012;
-var VIEWPORT_SIZE = 0x7020;
-var NETWORK_VIEW = 0x7030;
-
+// var MESH_COLOR = 0x4165;
+// var MESH_TEXTURE_INFO = 0x4170;
+// var KFDATA = 0xB000;
+// var KFHDR = 0xB00A;
+// var KFSEG = 0xB008;
+// var KFCURTIME = 0xB009;
+// var AMBIENT_NODE_TAG = 0xB001;
+// var OBJECT_NODE_TAG = 0xB002;
+// var CAMERA_NODE_TAG = 0xB003;
+// var TARGET_NODE_TAG = 0xB004;
+// var LIGHT_NODE_TAG = 0xB005;
+// var L_TARGET_NODE_TAG = 0xB006;
+// var SPOTLIGHT_NODE_TAG = 0xB007;
+// var NODE_ID = 0xB030;
+// var NODE_HDR = 0xB010;
+// var PIVOT = 0xB013;
+// var INSTANCE_NAME = 0xB011;
+// var MORPH_SMOOTH = 0xB015;
+// var BOUNDBOX = 0xB014;
+// var POS_TRACK_TAG = 0xB020;
+// var COL_TRACK_TAG = 0xB025;
+// var ROT_TRACK_TAG = 0xB021;
+// var SCL_TRACK_TAG = 0xB022;
+// var MORPH_TRACK_TAG = 0xB026;
+// var FOV_TRACK_TAG = 0xB023;
+// var ROLL_TRACK_TAG = 0xB024;
+// var HOT_TRACK_TAG = 0xB027;
+// var FALL_TRACK_TAG = 0xB028;
+// var HIDE_TRACK_TAG = 0xB029;
+// var POLY_2D = 0x5000;
+// var SHAPE_OK = 0x5010;
+// var SHAPE_NOT_OK = 0x5011;
+// var SHAPE_HOOK = 0x5020;
+// var PATH_3D = 0x6000;
+// var PATH_MATRIX = 0x6005;
+// var SHAPE_2D = 0x6010;
+// var M_SCALE = 0x6020;
+// var M_TWIST = 0x6030;
+// var M_TEETER = 0x6040;
+// var M_FIT = 0x6050;
+// var M_BEVEL = 0x6060;
+// var XZ_CURVE = 0x6070;
+// var YZ_CURVE = 0x6080;
+// var INTERPCT = 0x6090;
+// var DEFORM_LIMIT = 0x60A0;
+// var USE_CONTOUR = 0x6100;
+// var USE_TWEEN = 0x6110;
+// var USE_SCALE = 0x6120;
+// var USE_TWIST = 0x6130;
+// var USE_TEETER = 0x6140;
+// var USE_FIT = 0x6150;
+// var USE_BEVEL = 0x6160;
+// var DEFAULT_VIEW = 0x3000;
+// var VIEW_TOP = 0x3010;
+// var VIEW_BOTTOM = 0x3020;
+// var VIEW_LEFT = 0x3030;
+// var VIEW_RIGHT = 0x3040;
+// var VIEW_FRONT = 0x3050;
+// var VIEW_BACK = 0x3060;
+// var VIEW_USER = 0x3070;
+// var VIEW_CAMERA = 0x3080;
+// var VIEW_WINDOW = 0x3090;
+// var VIEWPORT_LAYOUT_OLD = 0x7000;
+// var VIEWPORT_DATA_OLD = 0x7010;
+// var VIEWPORT_LAYOUT = 0x7001;
+// var VIEWPORT_DATA = 0x7011;
+// var VIEWPORT_DATA_3 = 0x7012;
+// var VIEWPORT_SIZE = 0x7020;
+// var NETWORK_VIEW = 0x7030;
